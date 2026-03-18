@@ -195,8 +195,9 @@ export default function MemoScreen({ userId, onMenuPress }: Props) {
 
       {/* 메모 작성/편집 모달 */}
       <Modal visible={modalVisible} animationType="slide" onRequestClose={() => setModalVisible(false)}>
+        <SafeAreaView style={styles.modalContainer}>
         <KeyboardAvoidingView
-          style={styles.modalContainer}
+          style={styles.modalFlex}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
           <View style={styles.modalHeader}>
@@ -223,6 +224,7 @@ export default function MemoScreen({ userId, onMenuPress }: Props) {
             textAlignVertical="top"
           />
         </KeyboardAvoidingView>
+        </SafeAreaView>
       </Modal>
 
       {/* 서버 불러오기 모달 */}
@@ -328,6 +330,7 @@ const styles = StyleSheet.create({
   emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyText: { color: '#aaa', fontSize: 15, textAlign: 'center', marginTop: 80 },
   modalContainer: { flex: 1, backgroundColor: '#fff' },
+  modalFlex: { flex: 1 },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',

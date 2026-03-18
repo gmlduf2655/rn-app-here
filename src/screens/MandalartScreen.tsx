@@ -7,6 +7,7 @@ import {
   StyleSheet,
   TouchableOpacity,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const EMPTY_GRID = Array(9).fill(null).map(() => Array(9).fill(''));
 
@@ -45,7 +46,7 @@ export default function MandalartScreen({ onMenuPress }: Props) {
   };
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={onMenuPress} style={styles.menuBtn}>
           <Text style={styles.menuBtnText}>☰</Text>
@@ -83,7 +84,7 @@ export default function MandalartScreen({ onMenuPress }: Props) {
           </View>
         </ScrollView>
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
 

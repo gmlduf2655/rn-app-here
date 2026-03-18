@@ -10,6 +10,7 @@ import {
   Modal,
   FlatList,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   getBrainDumps,
   saveBrainDump,
@@ -156,7 +157,7 @@ export default function TimeBoxScreen({ userId, onMenuPress }: Props) {
   const hours = Array.from({ length: 24 }, (_, i) => i);
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       {/* 헤더 */}
       <View style={styles.header}>
         <TouchableOpacity onPress={onMenuPress} style={styles.menuBtn}>
@@ -400,7 +401,7 @@ export default function TimeBoxScreen({ userId, onMenuPress }: Props) {
           </View>
         </View>
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -411,7 +412,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 16,
-    paddingTop: 20,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
