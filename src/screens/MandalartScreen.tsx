@@ -10,7 +10,11 @@ import {
 
 const EMPTY_GRID = Array(9).fill(null).map(() => Array(9).fill(''));
 
-export default function MandalartScreen() {
+type Props = {
+  onMenuPress?: () => void;
+};
+
+export default function MandalartScreen({ onMenuPress }: Props) {
   const [grid, setGrid] = useState<string[][]>(EMPTY_GRID);
   const [focusedCell, setFocusedCell] = useState<[number, number] | null>(null);
 
@@ -43,6 +47,9 @@ export default function MandalartScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
+        <TouchableOpacity onPress={onMenuPress} style={styles.menuBtn}>
+          <Text style={styles.menuBtnText}>☰</Text>
+        </TouchableOpacity>
         <Text style={styles.headerTitle}>만다라트</Text>
         <TouchableOpacity
           onPress={() => setGrid(EMPTY_GRID.map((r) => [...r]))}
@@ -93,6 +100,8 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
   },
+  menuBtn: { marginRight: 10, padding: 4 },
+  menuBtnText: { fontSize: 22, color: '#1a1a2e' },
   headerTitle: { fontSize: 22, fontWeight: 'bold', color: '#1a1a2e' },
   resetButton: { padding: 8 },
   resetText: { color: '#ef4444', fontSize: 14 },

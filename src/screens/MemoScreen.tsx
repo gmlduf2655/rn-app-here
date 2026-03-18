@@ -11,33 +11,41 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { getMemos, createMemo, updateMemo, deleteMemo, getUnsyncedMemos, markMemoSynced } from '../db/localDb';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { getMemos, saveMemo, updateMemo, deleteMemo, getUnsyncedMemos, markMemoSynced } from '../db/localDb';
+import { fetchAndSeedFromServer } from '../db/syncDb';
 import { uploadMemo } from '../api/springApi';
 
 type Memo = {
-  id: number;
+  memo_id: string;
+  user_id: string;
+  reg_date: string;
   title: string;
-  content: string;
-  created_at: string;
-  updated_at: string;
+  memo_content: string;
+  upd_dt: string;
   synced: number;
-  server_id: number | null;
 };
 
 type Props = {
-  userId: number;
+  userId: string;
+  onMenuPress?: () => void;
 };
 
-export default function MemoScreen({ userId }: Props) {
+const today = () => new Date().toISOString().slice(0, 10);
+
+export default function MemoScreen({ userId, onMenuPress }: Props) {
   const [memos, setMemos] = useState<Memo[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
+  const [fetchModalVisible, setFetchModalVisible] = useState(false);
   const [editTarget, setEditTarget] = useState<Memo | null>(null);
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
+  const [fetchPwd, setFetchPwd] = useState('');
   const [syncing, setSyncing] = useState(false);
+  const [fetching, setFetching] = useState(false);
 
   const load = useCallback(async () => {
-    const data = await getMemos(userId);
+    const data = await getMemos(userId, '2020-01-01', today());
     setMemos(data);
   }, [userId]);
 
@@ -55,7 +63,7 @@ export default function MemoScreen({ userId }: Props) {
   const openEdit = (memo: Memo) => {
     setEditTarget(memo);
     setTitle(memo.title);
-    setContent(memo.content);
+    setContent(memo.memo_content);
     setModalVisible(true);
   };
 
@@ -65,9 +73,9 @@ export default function MemoScreen({ userId }: Props) {
       return;
     }
     if (editTarget) {
-      await updateMemo(editTarget.id, title.trim(), content);
+      await updateMemo(editTarget.memo_id, userId, title.trim(), content);
     } else {
-      await createMemo(userId, title.trim(), content);
+      await saveMemo(String(Date.now()), userId, today(), title.trim(), content);
     }
     setModalVisible(false);
     load();
@@ -80,7 +88,7 @@ export default function MemoScreen({ userId }: Props) {
         text: '삭제',
         style: 'destructive',
         onPress: async () => {
-          await deleteMemo(memo.id);
+          await deleteMemo(memo.memo_id);
           load();
         },
       },
@@ -96,19 +104,40 @@ export default function MemoScreen({ userId }: Props) {
         return;
       }
       for (const memo of unsynced) {
-        const result = await uploadMemo({
+        await uploadMemo({
           title: memo.title,
-          content: memo.content,
-          createdAt: memo.created_at,
+          content: memo.memo_content,
+          createdAt: memo.reg_date,
         });
-        await markMemoSynced(memo.id, result.id);
+        await markMemoSynced(memo.memo_id);
       }
       Alert.alert('동기화 완료', `${unsynced.length}개의 메모를 서버에 백업했습니다.`);
       load();
-    } catch (e) {
-      Alert.alert('동기화 실패', '서버에 연결할 수 없습니다. 홈 네트워크에 연결되어 있는지 확인해주세요.');
+    } catch {
+      Alert.alert('동기화 실패', '서버에 연결할 수 없습니다. 네트워크를 확인해주세요.');
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const handleFetch = async () => {
+    if (!fetchPwd.trim()) {
+      Alert.alert('비밀번호를 입력해주세요.');
+      return;
+    }
+    setFetching(true);
+    try {
+      const result = await fetchAndSeedFromServer(userId, fetchPwd.trim());
+      setFetchModalVisible(false);
+      setFetchPwd('');
+      if (result.success) {
+        Alert.alert('불러오기 완료', `서버에서 ${result.count}개의 메모를 받아왔습니다.`);
+        load();
+      } else {
+        Alert.alert('불러오기 실패', result.error ?? '알 수 없는 오류');
+      }
+    } finally {
+      setFetching(false);
     }
   };
 
@@ -118,10 +147,19 @@ export default function MemoScreen({ userId }: Props) {
   };
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       <View style={styles.header}>
+        <TouchableOpacity onPress={onMenuPress} style={styles.menuBtn}>
+          <Text style={styles.menuBtnText}>☰</Text>
+        </TouchableOpacity>
         <Text style={styles.headerTitle}>메모</Text>
         <View style={styles.headerActions}>
+          <TouchableOpacity
+            onPress={() => setFetchModalVisible(true)}
+            style={styles.fetchButton}
+          >
+            <Text style={styles.fetchButtonText}>불러오기</Text>
+          </TouchableOpacity>
           <TouchableOpacity onPress={handleSync} style={styles.syncButton} disabled={syncing}>
             <Text style={styles.syncButtonText}>{syncing ? '동기화 중...' : '백업'}</Text>
           </TouchableOpacity>
@@ -133,16 +171,16 @@ export default function MemoScreen({ userId }: Props) {
 
       <FlatList
         data={memos}
-        keyExtractor={(item) => item.id.toString()}
+        keyExtractor={(item) => item.memo_id.toString()}
         renderItem={({ item }) => (
           <TouchableOpacity style={styles.memoItem} onPress={() => openEdit(item)}>
             <View style={styles.memoItemRow}>
               <Text style={styles.memoTitle} numberOfLines={1}>{item.title}</Text>
               {item.synced === 0 && <View style={styles.unsyncedDot} />}
             </View>
-            <Text style={styles.memoContent} numberOfLines={2}>{item.content}</Text>
+            <Text style={styles.memoContent} numberOfLines={2}>{item.memo_content}</Text>
             <View style={styles.memoFooter}>
-              <Text style={styles.memoDate}>{formatDate(item.updated_at)}</Text>
+              <Text style={styles.memoDate}>{formatDate(item.upd_dt)}</Text>
               <TouchableOpacity onPress={() => handleDelete(item)}>
                 <Text style={styles.deleteText}>삭제</Text>
               </TouchableOpacity>
@@ -155,6 +193,7 @@ export default function MemoScreen({ userId }: Props) {
         contentContainerStyle={memos.length === 0 ? styles.emptyContainer : undefined}
       />
 
+      {/* 메모 작성/편집 모달 */}
       <Modal visible={modalVisible} animationType="slide" onRequestClose={() => setModalVisible(false)}>
         <KeyboardAvoidingView
           style={styles.modalContainer}
@@ -185,7 +224,50 @@ export default function MemoScreen({ userId }: Props) {
           />
         </KeyboardAvoidingView>
       </Modal>
-    </View>
+
+      {/* 서버 불러오기 모달 */}
+      <Modal
+        visible={fetchModalVisible}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setFetchModalVisible(false)}
+      >
+        <View style={styles.overlay}>
+          <View style={styles.fetchModal}>
+            <Text style={styles.fetchModalTitle}>서버에서 불러오기</Text>
+            <Text style={styles.fetchModalDesc}>
+              서버의 메모 데이터를 받아와 로컬에 저장합니다.{'\n'}
+              오프라인에서도 사용할 수 있게 백업됩니다.
+            </Text>
+            <TextInput
+              style={styles.fetchInput}
+              placeholder="비밀번호"
+              value={fetchPwd}
+              onChangeText={setFetchPwd}
+              secureTextEntry
+              autoFocus
+            />
+            <View style={styles.fetchModalActions}>
+              <TouchableOpacity
+                style={styles.fetchCancelBtn}
+                onPress={() => { setFetchModalVisible(false); setFetchPwd(''); }}
+              >
+                <Text style={styles.fetchCancelText}>취소</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.fetchConfirmBtn, fetching && styles.disabledBtn]}
+                onPress={handleFetch}
+                disabled={fetching}
+              >
+                <Text style={styles.fetchConfirmText}>
+                  {fetching ? '불러오는 중...' : '불러오기'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </SafeAreaView>
   );
 }
 
@@ -196,13 +278,21 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 16,
-    paddingTop: 20,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
   },
+  menuBtn: { marginRight: 10, padding: 4 },
+  menuBtnText: { fontSize: 22, color: '#1a1a2e' },
   headerTitle: { fontSize: 22, fontWeight: 'bold', color: '#1a1a2e' },
   headerActions: { flexDirection: 'row', gap: 8 },
+  fetchButton: {
+    backgroundColor: '#f0fdf4',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  fetchButtonText: { color: '#16a34a', fontSize: 13, fontWeight: '500' },
   syncButton: {
     backgroundColor: '#e8f4fd',
     paddingHorizontal: 12,
@@ -264,4 +354,48 @@ const styles = StyleSheet.create({
     color: '#333',
     lineHeight: 24,
   },
+  // 불러오기 모달
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  fetchModal: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    padding: 24,
+    width: '100%',
+  },
+  fetchModalTitle: { fontSize: 18, fontWeight: '700', color: '#1a1a2e', marginBottom: 8 },
+  fetchModalDesc: { fontSize: 13, color: '#666', lineHeight: 20, marginBottom: 16 },
+  fetchInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 15,
+    marginBottom: 20,
+    backgroundColor: '#f8f9fa',
+  },
+  fetchModalActions: { flexDirection: 'row', gap: 10 },
+  fetchCancelBtn: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    alignItems: 'center',
+  },
+  fetchCancelText: { color: '#666', fontSize: 15 },
+  fetchConfirmBtn: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#16a34a',
+    alignItems: 'center',
+  },
+  fetchConfirmText: { color: '#fff', fontSize: 15, fontWeight: '600' },
+  disabledBtn: { backgroundColor: '#86efac' },
 });

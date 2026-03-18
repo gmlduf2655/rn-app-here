@@ -1,0 +1,13 @@
+{
+  "users": [
+    {
+      "user_id": "gmlduf2655",
+      "user_pwd": "12345",
+      "user_name": "임희열",
+      "email": "gmlduf2655@test.com",
+      "address": "울산",
+      "adm_yn": "Y"
+    }
+  ],
+  "memos": []
+}
