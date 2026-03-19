@@ -31,7 +31,8 @@ type Props = {
 
 const COLORS = ['#4f46e5', '#16a34a', '#dc2626', '#d97706', '#0891b2'];
 
-const toDateString = (d: Date) => d.toISOString().slice(0, 10);
+const toDateString = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 const formatDisplayDate = (dateStr: string) => {
   const d = new Date(dateStr + 'T00:00:00');
