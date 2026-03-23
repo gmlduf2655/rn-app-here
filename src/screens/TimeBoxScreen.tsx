@@ -9,6 +9,8 @@ import {
   Alert,
   Modal,
   FlatList,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -20,9 +22,13 @@ import {
   getTimeTable,
   saveTimeTable,
   deleteTimeTable,
+  getUnsyncedBrainDumps,
+  markBrainDumpSynced,
   BrainDump,
   TimeTableItem,
 } from '../db/localDb';
+import { fetchAndSeedTimeBoxFromServer } from '../db/syncDb';
+import { uploadBrainDump } from '../api/springApi';
 
 type Props = {
   userId: string;
@@ -48,6 +54,11 @@ export default function TimeBoxScreen({ userId, onMenuPress }: Props) {
   const [addingDump, setAddingDump] = useState(false);
   const newDumpTitleRef = useRef('');       // 한글 조합 충돌 방지: ref로 관리
   const inputRef = useRef<TextInput>(null); // 추가 후 input 초기화용
+
+  const [syncing, setSyncing] = useState(false);
+  const [fetching, setFetching] = useState(false);
+  const [fetchModalVisible, setFetchModalVisible] = useState(false);
+  const [fetchPwd, setFetchPwd] = useState('');
 
   // 시간 슬롯 선택 → Brain Dump 선택 모달
   const [slotModalVisible, setSlotModalVisible] = useState(false);
@@ -144,6 +155,57 @@ export default function TimeBoxScreen({ userId, onMenuPress }: Props) {
     load();
   };
 
+  const handleSync = async () => {
+    setSyncing(true);
+    try {
+      const unsynced = await getUnsyncedBrainDumps(userId);
+      if (unsynced.length === 0) {
+        Alert.alert('동기화', '모든 할 일이 이미 동기화되어 있습니다.');
+        return;
+      }
+      for (const dump of unsynced) {
+        await uploadBrainDump({
+          dumpId: dump.dump_id,
+          userId,
+          tboxDate: dump.tbox_date,
+          dumpTitle: dump.dump_title,
+          dumpContent: dump.dump_content,
+          priorityYn: dump.priority_yn,
+          completeYn: dump.complete_yn,
+          status: dump.status,
+        });
+        await markBrainDumpSynced(dump.dump_id);
+      }
+      Alert.alert('동기화 완료', `${unsynced.length}개의 할 일을 서버에 백업했습니다.`);
+      load();
+    } catch {
+      Alert.alert('동기화 실패', '서버에 연결할 수 없습니다. 네트워크를 확인해주세요.');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const handleFetch = async () => {
+    if (!fetchPwd.trim()) {
+      Alert.alert('비밀번호를 입력해주세요.');
+      return;
+    }
+    setFetching(true);
+    try {
+      const result = await fetchAndSeedTimeBoxFromServer(userId, fetchPwd.trim());
+      setFetchModalVisible(false);
+      setFetchPwd('');
+      if (result.success) {
+        Alert.alert('불러오기 완료', `서버에서 ${result.count}개의 할 일을 받아왔습니다.`);
+        load();
+      } else {
+        Alert.alert('불러오기 실패', result.error ?? '알 수 없는 오류');
+      }
+    } finally {
+      setFetching(false);
+    }
+  };
+
   // 해당 시간+분에 배정된 항목 (슬롯당 1개)
   const getSlotItem = (hour: number, minute: number) =>
     timeTable.find((t) => t.time_hour === hour && t.time_minute === minute) ?? null;
@@ -165,6 +227,17 @@ export default function TimeBoxScreen({ userId, onMenuPress }: Props) {
           <Text style={styles.menuBtnText}>☰</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>타임박스</Text>
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            onPress={() => setFetchModalVisible(true)}
+            style={styles.fetchButton}
+          >
+            <Text style={styles.fetchButtonText}>불러오기</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleSync} style={styles.syncButton} disabled={syncing}>
+            <Text style={styles.syncButtonText}>{syncing ? '동기화 중...' : '백업'}</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -340,6 +413,52 @@ export default function TimeBoxScreen({ userId, onMenuPress }: Props) {
           })}
         </View>
       </ScrollView>
+
+      {/* 서버 불러오기 모달 */}
+      <Modal
+        visible={fetchModalVisible}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setFetchModalVisible(false)}
+      >
+        <KeyboardAvoidingView
+          style={styles.overlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View style={styles.fetchModal}>
+            <Text style={styles.fetchModalTitle}>서버에서 불러오기</Text>
+            <Text style={styles.fetchModalDesc}>
+              서버의 타임박스 데이터를 받아와 로컬에 저장합니다.{'\n'}
+              오프라인에서도 사용할 수 있게 백업됩니다.
+            </Text>
+            <TextInput
+              style={styles.fetchInput}
+              placeholder="비밀번호"
+              value={fetchPwd}
+              onChangeText={setFetchPwd}
+              secureTextEntry
+              autoFocus
+            />
+            <View style={styles.fetchModalActions}>
+              <TouchableOpacity
+                style={styles.fetchCancelBtn}
+                onPress={() => { setFetchModalVisible(false); setFetchPwd(''); }}
+              >
+                <Text style={styles.fetchCancelText}>취소</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.fetchConfirmBtn, fetching && styles.disabledBtn]}
+                onPress={handleFetch}
+                disabled={fetching}
+              >
+                <Text style={styles.fetchConfirmText}>
+                  {fetching ? '불러오는 중...' : '불러오기'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
 
       {/* Brain Dump 선택 모달 */}
       <Modal
@@ -646,4 +765,66 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalCancelText: { color: '#666', fontSize: 15 },
+
+  // 헤더 액션 버튼
+  headerActions: { flexDirection: 'row', gap: 8 },
+  fetchButton: {
+    backgroundColor: '#f0fdf4',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  fetchButtonText: { color: '#16a34a', fontSize: 13, fontWeight: '500' },
+  syncButton: {
+    backgroundColor: '#e8f4fd',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  syncButtonText: { color: '#2196f3', fontSize: 13, fontWeight: '500' },
+
+  // 불러오기 모달
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  fetchModal: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    padding: 24,
+    width: '100%',
+  },
+  fetchModalTitle: { fontSize: 18, fontWeight: '700', color: '#1a1a2e', marginBottom: 8 },
+  fetchModalDesc: { fontSize: 13, color: '#666', lineHeight: 20, marginBottom: 16 },
+  fetchInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 15,
+    marginBottom: 20,
+    backgroundColor: '#f8f9fa',
+  },
+  fetchModalActions: { flexDirection: 'row', gap: 10 },
+  fetchCancelBtn: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    alignItems: 'center',
+  },
+  fetchCancelText: { color: '#666', fontSize: 15 },
+  fetchConfirmBtn: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#16a34a',
+    alignItems: 'center',
+  },
+  fetchConfirmText: { color: '#fff', fontSize: 15, fontWeight: '600' },
+  disabledBtn: { backgroundColor: '#86efac' },
 });

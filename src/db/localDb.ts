@@ -6,7 +6,7 @@ import staticSeed from './seed.json';
 const db: SQLite.SQLiteDatabase = SQLite.openDatabaseSync('myapp.db');
 //const db: SQLite.SQLiteDatabase
 // 스키마가 바뀔 때마다 이 값을 올리면 테이블을 재생성합니다
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 export async function initDb() {
   const versionRow = await db.getFirstAsync<{ user_version: number }>(
@@ -65,7 +65,8 @@ export async function initDb() {
       reg_id       TEXT,
       reg_dt       TEXT,
       upd_id       TEXT,
-      mod_dt       TEXT
+      mod_dt       TEXT,
+      synced       INTEGER DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS tb_tbox_time_table (
@@ -213,7 +214,7 @@ export async function getMemos(userId: string, startDate: string, endDate: strin
     `SELECT memo_id, user_id, reg_date, title, memo_content, upd_id, upd_dt, reg_id, reg_dt, synced
      FROM tb_memo
      WHERE user_id = ? AND reg_date BETWEEN ? AND ?
-     ORDER BY memo_id DESC`,
+     ORDER BY reg_dt DESC`,
     [userId, startDate, endDate]
   );
 }
@@ -311,13 +312,14 @@ export async function saveBrainDump(
   dumpTitle: string,
   dumpContent: string,
   priorityYn: string = 'N',
-  status: string = '0'
+  status: string = '0',
+  synced: number = 0
 ) {
   const now = new Date().toISOString();
   return db.runAsync(
     `INSERT OR REPLACE INTO tb_tbox_brain_dump
-      (dump_id, user_id, tbox_date, dump_title, dump_content, priority_yn, complete_yn, status, reg_id, reg_dt, upd_id, mod_dt)
-     VALUES (?, ?, ?, ?, ?, ?, 'N', ?, ?, ?, ?, ?)`,
+      (dump_id, user_id, tbox_date, dump_title, dump_content, priority_yn, complete_yn, status, reg_id, reg_dt, upd_id, mod_dt, synced)
+     VALUES (?, ?, ?, ?, ?, ?, 'N', ?, ?, ?, ?, ?, ?)`,
     [
       String(dumpId),
       String(userId),
@@ -330,8 +332,30 @@ export async function saveBrainDump(
       now,
       String(userId),
       now,
+      synced,
     ]
   );
+}
+
+export async function getUnsyncedBrainDumps(userId: string) {
+  return db.getAllAsync<{
+    dump_id: string;
+    tbox_date: string;
+    user_id: string;
+    dump_title: string;
+    dump_content: string;
+    priority_yn: string;
+    complete_yn: string;
+    status: string;
+  }>(
+    `SELECT dump_id, tbox_date, user_id, dump_title, dump_content, priority_yn, complete_yn, status
+     FROM tb_tbox_brain_dump WHERE user_id = ? AND synced = 0`,
+    [userId]
+  );
+}
+
+export async function markBrainDumpSynced(dumpId: string) {
+  return db.runAsync('UPDATE tb_tbox_brain_dump SET synced = 1 WHERE dump_id = ?', [String(dumpId)]);
 }
 
 export async function togglePriority(dumpId: string, priorityYn: string) {

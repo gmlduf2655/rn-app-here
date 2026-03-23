@@ -1,7 +1,7 @@
 // Spring Boot 백업/동기화 API
 // 집 Wi-Fi에서 수동으로 백업할 때 사용
 
-const BASE_URL = 'http://192.168.0.1:8080/api'; // TODO: 실제 서버 IP로 변경
+const BASE_URL = 'http://localhost:8080/api';
 
 let authToken: string | null = null;
 
@@ -28,10 +28,11 @@ export async function loginToServer(userId: string, password: string) {
 
 export async function uploadMemo(memo: {
   title: string;
-  content: string;
-  createdAt: string;
+  userId: string;
+  memoContent: string;
+  regDate: string;
 }) {
-  const res = await fetch(`${BASE_URL}/memo`, {
+  const res = await fetch(`${BASE_URL}/memo/saveMemo`, {
     method: 'POST',
     headers: headers(),
     body: JSON.stringify(memo),
@@ -43,5 +44,24 @@ export async function uploadMemo(memo: {
 export async function fetchServerMemos() {
   const res = await fetch(`${BASE_URL}/memo`, { headers: headers() });
   if (!res.ok) throw new Error('서버 메모 조회 실패');
+  return res.json();
+}
+
+export async function uploadBrainDump(dump: {
+  dumpId: string;
+  userId: string;
+  tboxDate: string;
+  dumpTitle: string;
+  dumpContent: string;
+  priorityYn: string;
+  completeYn: string;
+  status: string;
+}) {
+  const res = await fetch(`${BASE_URL}/timebox/saveBrainDump`, {
+    method: 'POST',
+    headers: headers(),
+    body: JSON.stringify(dump),
+  });
+  if (!res.ok) throw new Error('Brain Dump 업로드 실패');
   return res.json();
 }

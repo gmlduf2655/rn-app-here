@@ -1,7 +1,12 @@
 import * as FileSystem from 'expo-file-system/legacy';
-import { createUser, insertSeed, getBackupPath } from './localDb';
+import { createUser, insertSeed, getBackupPath, saveBrainDump, saveTimeTable } from './localDb';
 
-const BASE_URL = 'http://119.71.193.203:8080/api'; // 실제 서버 IP로 변경
+const BASE_URL = 'http://localhost:8080/api';
+
+// 휴대폰과 PC 연결 시 필요(USB 디버깅 + 테더링도 해야됨)
+// adb reverse tcp:8080 tcp:8080
+// 휴대폰에서 개발자 모드 실행 시 필요
+// adb shell input keyevent 82
 
 export type SyncResult = {
   success: boolean;
@@ -71,6 +76,78 @@ export async function fetchAndSeedFromServer(
     await insertSeed(backup);
 
     return { success: true, count: memos.length };
+  } catch (e: any) {
+    return { success: false, error: e.message ?? '알 수 없는 오류' };
+  }
+}
+
+/**
+ * 서버에서 타임박스(Brain Dump + Time Table) 데이터를 받아와 로컬 SQLite에 저장
+ */
+export async function fetchAndSeedTimeBoxFromServer(
+  userId: string,
+  userPwd: string
+): Promise<SyncResult> {
+  try {
+    // 1. 로그인 확인
+    const loginRes = await fetch(
+      `${BASE_URL}/user/loginUser?userId=${encodeURIComponent(userId)}&userPwd=${encodeURIComponent(userPwd)}`
+    );
+    if (!loginRes.ok) throw new Error('서버 로그인 실패');
+
+    const loginData: any[] = await loginRes.json();
+    if (!loginData || loginData.length === 0) throw new Error('아이디 또는 비밀번호가 올바르지 않습니다.');
+
+    // 2. 전체 Brain Dump 조회 (tboxDate 없이 → 전체 날짜)
+    const dumpRes = await fetch(
+      `${BASE_URL}/timebox/selectBrainDumpList?userId=${encodeURIComponent(userId)}`
+    );
+    if (!dumpRes.ok) throw new Error('Brain Dump 데이터 수신 실패');
+    const dumps: any[] = await dumpRes.json();
+
+    // 3. Brain Dump가 존재하는 고유 날짜 목록 추출
+    const uniqueDates = [...new Set(dumps.map((d: any) => d.tboxDate).filter(Boolean))];
+
+    // 4. 각 날짜별 Time Table 조회
+    const allTimeTables: any[] = [];
+    for (const date of uniqueDates) {
+      const ttRes = await fetch(
+        `${BASE_URL}/timebox/selectTimeTableList?userId=${encodeURIComponent(userId)}&tboxDate=${encodeURIComponent(date)}`
+      );
+      if (ttRes.ok) {
+        const tts: any[] = await ttRes.json();
+        allTimeTables.push(...tts);
+      }
+    }
+
+    // 5. Brain Dump SQLite 저장 (synced = 1)
+    for (const dump of dumps) {
+      await saveBrainDump(
+        dump.dumpId,
+        userId,
+        dump.tboxDate,
+        dump.dumpTitle,
+        dump.dumpContent ?? '',
+        dump.priorityYn ?? 'N',
+        dump.status ?? '0',
+        1
+      );
+    }
+
+    // 6. Time Table SQLite 저장
+    for (const tt of allTimeTables) {
+      await saveTimeTable(
+        tt.timeTableId,
+        tt.dumpId,
+        tt.tboxDate,
+        userId,
+        tt.timeHour,
+        tt.timeMinute,
+        tt.color ?? '#4f46e5'
+      );
+    }
+
+    return { success: true, count: dumps.length };
   } catch (e: any) {
     return { success: false, error: e.message ?? '알 수 없는 오류' };
   }

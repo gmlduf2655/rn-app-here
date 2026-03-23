@@ -105,9 +105,10 @@ export default function MemoScreen({ userId, onMenuPress }: Props) {
       }
       for (const memo of unsynced) {
         await uploadMemo({
+          userId : userId,
           title: memo.title,
-          content: memo.memo_content,
-          createdAt: memo.reg_date,
+          memoContent: memo.memo_content,
+          regDate: memo.reg_date,
         });
         await markMemoSynced(memo.memo_id);
       }
