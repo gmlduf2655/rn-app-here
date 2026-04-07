@@ -196,36 +196,36 @@ export default function MemoScreen({ userId, onMenuPress }: Props) {
 
       {/* 메모 작성/편집 모달 */}
       <Modal visible={modalVisible} animationType="slide" onRequestClose={() => setModalVisible(false)}>
-        <SafeAreaView style={styles.modalContainer}>
         <KeyboardAvoidingView
           style={styles.modalFlex}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior="padding"
         >
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setModalVisible(false)}>
-              <Text style={styles.cancelText}>취소</Text>
-            </TouchableOpacity>
-            <Text style={styles.modalTitle}>{editTarget ? '메모 편집' : '새 메모'}</Text>
-            <TouchableOpacity onPress={handleSave}>
-              <Text style={styles.saveText}>저장</Text>
-            </TouchableOpacity>
-          </View>
-          <TextInput
-            style={styles.titleInput}
-            placeholder="제목"
-            value={title}
-            onChangeText={setTitle}
-          />
-          <TextInput
-            style={styles.contentInput}
-            placeholder="내용을 입력하세요..."
-            value={content}
-            onChangeText={setContent}
-            multiline
-            textAlignVertical="top"
-          />
+          <SafeAreaView style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <TouchableOpacity onPress={() => setModalVisible(false)}>
+                <Text style={styles.cancelText}>취소</Text>
+              </TouchableOpacity>
+              <Text style={styles.modalTitle}>{editTarget ? '메모 편집' : '새 메모'}</Text>
+              <TouchableOpacity onPress={handleSave}>
+                <Text style={styles.saveText}>저장</Text>
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              style={styles.titleInput}
+              placeholder="제목"
+              value={title}
+              onChangeText={setTitle}
+            />
+            <TextInput
+              style={styles.contentInput}
+              placeholder="내용을 입력하세요..."
+              value={content}
+              onChangeText={setContent}
+              multiline
+              textAlignVertical="top"
+            />
+          </SafeAreaView>
         </KeyboardAvoidingView>
-        </SafeAreaView>
       </Modal>
 
       {/* 서버 불러오기 모달 */}
@@ -235,6 +235,10 @@ export default function MemoScreen({ userId, onMenuPress }: Props) {
         transparent
         onRequestClose={() => setFetchModalVisible(false)}
       >
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior="padding"
+        >
         <View style={styles.overlay}>
           <View style={styles.fetchModal}>
             <Text style={styles.fetchModalTitle}>서버에서 불러오기</Text>
@@ -269,6 +273,7 @@ export default function MemoScreen({ userId, onMenuPress }: Props) {
             </View>
           </View>
         </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );

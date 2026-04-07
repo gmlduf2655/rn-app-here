@@ -143,7 +143,8 @@ export async function fetchAndSeedTimeBoxFromServer(
         userId,
         tt.timeHour,
         tt.timeMinute,
-        tt.color ?? '#4f46e5'
+        tt.color ?? '#4f46e5',
+        "1"
       );
     }
 

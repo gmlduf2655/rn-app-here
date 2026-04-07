@@ -8,6 +8,7 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { createUser, findUser } from '../db/localDb';
@@ -54,7 +55,7 @@ export default function LoginScreen({ onLogin }: Props) {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <View style={styles.container}>
-      <Text style={styles.title}>MyApp</Text>
+      <Image source={require('../../assets/logo.png')} style={styles.logo} resizeMode="contain" />
 
       {isSignUp && (
         <TextInput
@@ -100,18 +101,24 @@ export default function LoginScreen({ onLogin }: Props) {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: '#f8f9fa' },
+  flex: { flex: 1, backgroundColor: '#fff' },
   container: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
+    backgroundColor: '#fff',
   },
   title: {
     fontSize: 32,
     fontWeight: 'bold',
     marginBottom: 40,
     color: '#1a1a2e',
+  },
+  logo: {
+    width: 280,
+    height: 200,
+    marginBottom: 32,
   },
   input: {
     width: '100%',

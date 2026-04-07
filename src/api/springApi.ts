@@ -47,6 +47,24 @@ export async function fetchServerMemos() {
   return res.json();
 }
 
+export async function uploadTimeTable(item: {
+  timeTableId: string;
+  dumpId: string;
+  tboxDate: string;
+  userId: string;
+  timeHour: number;
+  timeMinute: number;
+  color: string;
+}) {
+  const res = await fetch(`${BASE_URL}/timebox/saveTimeTable`, {
+    method: 'POST',
+    headers: headers(),
+    body: JSON.stringify(item),
+  });
+  if (!res.ok) throw new Error('TimeTable 업로드 실패');
+  return res.json();
+}
+
 export async function uploadBrainDump(dump: {
   dumpId: string;
   userId: string;

@@ -11,7 +11,10 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Platform,
+  Dimensions,
 } from 'react-native';
+
+const SCREEN_HEIGHT = Dimensions.get('window').height;
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   getBrainDumps,
@@ -24,11 +27,14 @@ import {
   deleteTimeTable,
   getUnsyncedBrainDumps,
   markBrainDumpSynced,
+  updateBrainDump,
+  getUnsyncedTimeTables,
+  markTimeTableSynced,
   BrainDump,
   TimeTableItem,
 } from '../db/localDb';
 import { fetchAndSeedTimeBoxFromServer } from '../db/syncDb';
-import { uploadBrainDump } from '../api/springApi';
+import { uploadBrainDump, uploadTimeTable } from '../api/springApi';
 
 type Props = {
   userId: string;
@@ -60,11 +66,30 @@ export default function TimeBoxScreen({ userId, onMenuPress }: Props) {
   const [fetchModalVisible, setFetchModalVisible] = useState(false);
   const [fetchPwd, setFetchPwd] = useState('');
 
+  // Brain Dump 상세 편집 모달
+  const [detailModalVisible, setDetailModalVisible] = useState(false);
+  const [selectedDump, setSelectedDump] = useState<BrainDump | null>(null);
+  const detailTitleRef = useRef('');
+  const detailContentRef = useRef('');
+
+  // 상세 모달 시간 배정
+  const [detailTimeEnabled, setDetailTimeEnabled] = useState(false);
+  const [detailHourCursor, setDetailHourCursor] = useState(9);
+  const [detailAssignSlots, setDetailAssignSlots] = useState<{hour: number; minute: number}[]>([]);
+  const [detailAssignColor, setDetailAssignColor] = useState(COLORS[0]);
+  const [detailExistingSlots, setDetailExistingSlots] = useState<TimeTableItem[]>([]);
+
   // 시간 슬롯 선택 → Brain Dump 선택 모달
   const [slotModalVisible, setSlotModalVisible] = useState(false);
   const [selectedHour, setSelectedHour] = useState<number>(0);
   const [selectedMinute, setSelectedMinute] = useState<number>(0);
   const [selectedColor, setSelectedColor] = useState<string>(COLORS[0]);
+
+  // 배정된 슬롯 상세 모달
+  const [slotDetailModalVisible, setSlotDetailModalVisible] = useState(false);
+  const [selectedSlotItem, setSelectedSlotItem] = useState<TimeTableItem | null>(null);
+  const [slotDetailColor, setSlotDetailColor] = useState<string>(COLORS[0]);
+  const [slotDetailDumpId, setSlotDetailDumpId] = useState<string>('');
 
   const load = useCallback(async () => {
     const dumps = await getBrainDumps(userId, currentDate);
@@ -133,6 +158,39 @@ export default function TimeBoxScreen({ userId, onMenuPress }: Props) {
     ]);
   };
 
+  // Brain Dump 상세 모달 열기
+  const openDetailModal = (item: BrainDump) => {
+    setSelectedDump(item);
+    detailTitleRef.current = item.dump_title;
+    detailContentRef.current = item.dump_content;
+    setDetailTimeEnabled(false);
+    setDetailHourCursor(9);
+    setDetailAssignSlots([]);
+    setDetailAssignColor(COLORS[0]);
+    setDetailExistingSlots(timeTable.filter(t => t.dump_id === item.dump_id));
+    setDetailModalVisible(true);
+  };
+
+  // Brain Dump 상세 저장
+  const handleSaveDetail = async () => {
+    if (!selectedDump) return;
+    const title = detailTitleRef.current.trim();
+    if (!title) {
+      Alert.alert('제목을 입력해주세요.');
+      return;
+    }
+    await updateBrainDump(selectedDump.dump_id, userId, title, detailContentRef.current);
+    if (detailTimeEnabled && detailAssignSlots.length > 0) {
+      for (const slot of detailAssignSlots) {
+        const timeTableId = String(Date.now()) + String(Math.random());
+        await saveTimeTable(timeTableId, selectedDump.dump_id, currentDate, userId, slot.hour, slot.minute, detailAssignColor, '0');
+      }
+    }
+    setDetailModalVisible(false);
+    setSelectedDump(null);
+    load();
+  };
+
   // 시간 슬롯 클릭 → 모달 열기
   const openSlotModal = (hour: number, minute: number) => {
     setSelectedHour(hour);
@@ -144,7 +202,7 @@ export default function TimeBoxScreen({ userId, onMenuPress }: Props) {
   // 시간 슬롯에 Brain Dump 배정
   const handleAssignDump = async (dump: BrainDump) => {
     const timeTableId = String(Date.now()) + String(Math.random());
-    await saveTimeTable(timeTableId, dump.dump_id, currentDate, userId, selectedHour, selectedMinute, selectedColor);
+    await saveTimeTable(timeTableId, dump.dump_id, currentDate, userId, selectedHour, selectedMinute, selectedColor, "1");
     setSlotModalVisible(false);
     load();
   };
@@ -155,15 +213,35 @@ export default function TimeBoxScreen({ userId, onMenuPress }: Props) {
     load();
   };
 
+  // 배정된 슬롯 수정 (색상/할 일 변경)
+  const handleSaveSlotDetail = async () => {
+    if (!selectedSlotItem) return;
+    await saveTimeTable(
+      selectedSlotItem.time_table_id,
+      slotDetailDumpId,
+      selectedSlotItem.tbox_date,
+      selectedSlotItem.user_id,
+      selectedSlotItem.time_hour,
+      selectedSlotItem.time_minute,
+      slotDetailColor,
+      '0',
+    );
+    setSlotDetailModalVisible(false);
+    load();
+  };
+
   const handleSync = async () => {
     setSyncing(true);
     try {
-      const unsynced = await getUnsyncedBrainDumps(userId);
-      if (unsynced.length === 0) {
-        Alert.alert('동기화', '모든 할 일이 이미 동기화되어 있습니다.');
+      const unsyncedDumps = await getUnsyncedBrainDumps(userId);
+      const unsyncedTables = await getUnsyncedTimeTables(userId);
+
+      if (unsyncedDumps.length === 0 && unsyncedTables.length === 0) {
+        Alert.alert('동기화', '모든 데이터가 이미 동기화되어 있습니다.');
         return;
       }
-      for (const dump of unsynced) {
+
+      for (const dump of unsyncedDumps) {
         await uploadBrainDump({
           dumpId: dump.dump_id,
           userId,
@@ -176,7 +254,24 @@ export default function TimeBoxScreen({ userId, onMenuPress }: Props) {
         });
         await markBrainDumpSynced(dump.dump_id);
       }
-      Alert.alert('동기화 완료', `${unsynced.length}개의 할 일을 서버에 백업했습니다.`);
+
+      for (const item of unsyncedTables) {
+        await uploadTimeTable({
+          timeTableId: item.time_table_id,
+          dumpId: item.dump_id,
+          tboxDate: item.tbox_date,
+          userId: item.user_id,
+          timeHour: item.time_hour,
+          timeMinute: item.time_minute,
+          color: item.color,
+        });
+        await markTimeTableSynced(item.time_table_id);
+      }
+
+      Alert.alert(
+        '동기화 완료',
+        `할 일 ${unsyncedDumps.length}개, 타임테이블 ${unsyncedTables.length}개를 서버에 백업했습니다.`
+      );
       load();
     } catch {
       Alert.alert('동기화 실패', '서버에 연결할 수 없습니다. 네트워크를 확인해주세요.');
@@ -214,7 +309,8 @@ export default function TimeBoxScreen({ userId, onMenuPress }: Props) {
   const top3 = brainDumps.filter((d) => d.priority_yn === 'Y').slice(0, 3);
 
   // 미완료 Brain Dump 목록 (모달용)
-  const incompleteDumps = brainDumps.filter((d) => d.complete_yn !== 'Y');
+  //const incompleteDumps = brainDumps.filter((d) => d.complete_yn !== 'Y');
+  const incompleteDumps = brainDumps.filter((d) => 1 == 1);
 
   // 시간별 행 목록 (24개, 각 행에 :00과 :30 슬롯)
   const hours = Array.from({ length: 24 }, (_, i) => i);
@@ -327,15 +423,22 @@ export default function TimeBoxScreen({ userId, onMenuPress }: Props) {
               </TouchableOpacity>
 
               {/* 제목 */}
-              <Text
-                style={[
-                  styles.dumpTitle,
-                  item.complete_yn === 'Y' && styles.dumpTitleDone,
-                ]}
-                numberOfLines={1}
-              >
-                {item.dump_title}
-              </Text>
+              <TouchableOpacity style={{ flex: 1 }} onPress={() => openDetailModal(item)}>
+                <Text
+                  style={[
+                    styles.dumpTitle,
+                    item.complete_yn === 'Y' && styles.dumpTitleDone,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {item.dump_title}
+                </Text>
+                {item.dump_content ? (
+                  <Text style={styles.dumpContentPreview} numberOfLines={1}>
+                    {item.dump_content}
+                  </Text>
+                ) : null}
+              </TouchableOpacity>
 
               {/* 완료 버튼 */}
               <TouchableOpacity
@@ -374,7 +477,10 @@ export default function TimeBoxScreen({ userId, onMenuPress }: Props) {
                 {/* :00 슬롯 */}
                 <View style={styles.halfSlot}>
                   {slot0 ? (
-                    <View style={[styles.slotItem, { borderLeftColor: slot0.color }]}>
+                    <TouchableOpacity
+                      style={[styles.slotItem, { borderLeftColor: slot0.color }]}
+                      onPress={() => { setSelectedSlotItem(slot0); setSlotDetailColor(slot0.color); setSlotDetailDumpId(slot0.dump_id); setSlotDetailModalVisible(true); }}
+                    >
                       <Text style={[styles.slotTitle, slot0.complete_yn === 'Y' && styles.slotTitleDone]} numberOfLines={1}>
                         {slot0.dump_title}
                       </Text>
@@ -382,7 +488,7 @@ export default function TimeBoxScreen({ userId, onMenuPress }: Props) {
                       <TouchableOpacity onPress={() => handleDeleteTimeTable(slot0)} style={styles.slotDeleteBtn}>
                         <Text style={styles.slotDeleteText}>✕</Text>
                       </TouchableOpacity>
-                    </View>
+                    </TouchableOpacity>
                   ) : (
                     <TouchableOpacity onPress={() => openSlotModal(hour, 0)} style={styles.slotAddBtn}>
                       <Text style={styles.slotAddText}>:00</Text>
@@ -393,7 +499,10 @@ export default function TimeBoxScreen({ userId, onMenuPress }: Props) {
                 {/* :30 슬롯 */}
                 <View style={styles.halfSlot}>
                   {slot30 ? (
-                    <View style={[styles.slotItem, { borderLeftColor: slot30.color }]}>
+                    <TouchableOpacity
+                      style={[styles.slotItem, { borderLeftColor: slot30.color }]}
+                      onPress={() => { setSelectedSlotItem(slot30); setSlotDetailColor(slot30.color); setSlotDetailDumpId(slot30.dump_id); setSlotDetailModalVisible(true); }}
+                    >
                       <Text style={[styles.slotTitle, slot30.complete_yn === 'Y' && styles.slotTitleDone]} numberOfLines={1}>
                         {slot30.dump_title}
                       </Text>
@@ -401,7 +510,7 @@ export default function TimeBoxScreen({ userId, onMenuPress }: Props) {
                       <TouchableOpacity onPress={() => handleDeleteTimeTable(slot30)} style={styles.slotDeleteBtn}>
                         <Text style={styles.slotDeleteText}>✕</Text>
                       </TouchableOpacity>
-                    </View>
+                    </TouchableOpacity>
                   ) : (
                     <TouchableOpacity onPress={() => openSlotModal(hour, 30)} style={styles.slotAddBtn}>
                       <Text style={styles.slotAddText}>:30</Text>
@@ -460,6 +569,186 @@ export default function TimeBoxScreen({ userId, onMenuPress }: Props) {
         </KeyboardAvoidingView>
       </Modal>
 
+      {/* Brain Dump 상세 편집 모달 */}
+      <Modal
+        visible={detailModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setDetailModalVisible(false)}
+      >
+        <KeyboardAvoidingView
+          style={styles.overlay}
+          behavior="padding"
+        >
+          <View style={styles.detailModal}>
+            <Text style={styles.detailModalTitle}>할 일 상세</Text>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              <Text style={styles.detailLabel}>제목</Text>
+              <TextInput
+                style={styles.detailTitleInput}
+                defaultValue={selectedDump?.dump_title ?? ''}
+                onChangeText={(t) => { detailTitleRef.current = t; }}
+                placeholder="제목"
+                returnKeyType="next"
+              />
+              <Text style={styles.detailLabel}>내용</Text>
+              <TextInput
+                style={styles.detailContentInput}
+                defaultValue={selectedDump?.dump_content ?? ''}
+                onChangeText={(t) => { detailContentRef.current = t; }}
+                placeholder="상세 내용을 입력하세요"
+                multiline
+                textAlignVertical="top"
+                scrollEnabled
+              />
+
+              {/* 기존 배정된 시간 */}
+              {detailExistingSlots.length > 0 && (
+                <View style={styles.existingSlotsSection}>
+                  <Text style={styles.detailLabel}>배정된 시간</Text>
+                  <View style={styles.existingSlotsList}>
+                    {[...detailExistingSlots]
+                      .sort((a, b) => a.time_hour !== b.time_hour ? a.time_hour - b.time_hour : a.time_minute - b.time_minute)
+                      .map(slot => (
+                        <View key={slot.time_table_id} style={[styles.existingSlotChip, { borderLeftColor: slot.color }]}>
+                          <Text style={styles.existingSlotText}>
+                            {String(slot.time_hour).padStart(2, '0')}:{slot.time_minute === 0 ? '00' : '30'}
+                          </Text>
+                          <TouchableOpacity
+                            onPress={async () => {
+                              await handleDeleteTimeTable(slot);
+                              setDetailExistingSlots(prev => prev.filter(s => s.time_table_id !== slot.time_table_id));
+                            }}
+                          >
+                            <Text style={styles.existingSlotDeleteText}>✕</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                  </View>
+                </View>
+              )}
+
+              {/* 시간 배정 */}
+              <View style={styles.timeAssignHeader}>
+                <Text style={styles.detailLabel}>시간 배정</Text>
+                <TouchableOpacity
+                  style={[styles.timeToggleBtn, detailTimeEnabled && styles.timeToggleBtnOn]}
+                  onPress={() => setDetailTimeEnabled(!detailTimeEnabled)}
+                >
+                  <Text style={[styles.timeToggleText, detailTimeEnabled && styles.timeToggleTextOn]}>
+                    {detailTimeEnabled ? 'ON' : 'OFF'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {detailTimeEnabled && (
+                <>
+                  {/* 시 선택 (커서) */}
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.hourScroll}>
+                    {Array.from({ length: 24 }, (_, i) => (
+                      <TouchableOpacity
+                        key={i}
+                        style={[styles.hourBtn, detailHourCursor === i && styles.hourBtnSelected]}
+                        onPress={() => setDetailHourCursor(i)}
+                      >
+                        <Text style={[styles.hourBtnText, detailHourCursor === i && styles.hourBtnTextSelected]}>
+                          {String(i).padStart(2, '0')}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+
+                  {/* 분 선택 → 슬롯 토글 */}
+                  <View style={styles.minuteRow}>
+                    {[0, 30].map((m) => {
+                      const isActive = detailAssignSlots.some(s => s.hour === detailHourCursor && s.minute === m);
+                      const isAlreadyAssigned = detailExistingSlots.some(s => s.time_hour === detailHourCursor && s.time_minute === m);
+                      return (
+                        <TouchableOpacity
+                          key={m}
+                          disabled={isAlreadyAssigned}
+                          style={[
+                            styles.minuteBtn,
+                            isActive && styles.minuteBtnSelected,
+                            isAlreadyAssigned && styles.minuteBtnAssigned,
+                          ]}
+                          onPress={() => {
+                            setDetailAssignSlots(prev =>
+                              isActive
+                                ? prev.filter(s => !(s.hour === detailHourCursor && s.minute === m))
+                                : [...prev, { hour: detailHourCursor, minute: m }]
+                            );
+                          }}
+                        >
+                          <Text style={[
+                            styles.minuteBtnText,
+                            isActive && styles.minuteBtnTextSelected,
+                            isAlreadyAssigned && styles.minuteBtnTextAssigned,
+                          ]}>
+                            {String(detailHourCursor).padStart(2, '0')}{m === 0 ? ':00' : ':30'}
+                          </Text>
+                          {isAlreadyAssigned && <Text style={styles.minuteBtnAssignedLabel}>배정됨</Text>}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  {/* 선택된 슬롯 칩 */}
+                  {detailAssignSlots.length > 0 && (
+                    <View style={styles.slotChipRow}>
+                      {[...detailAssignSlots]
+                        .sort((a, b) => a.hour !== b.hour ? a.hour - b.hour : a.minute - b.minute)
+                        .map((s) => (
+                          <TouchableOpacity
+                            key={`${s.hour}-${s.minute}`}
+                            style={styles.slotChip}
+                            onPress={() => setDetailAssignSlots(prev => prev.filter(x => !(x.hour === s.hour && x.minute === s.minute)))}
+                          >
+                            <Text style={styles.slotChipText}>
+                              {String(s.hour).padStart(2, '0')}:{s.minute === 0 ? '00' : '30'} ✕
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                    </View>
+                  )}
+
+                  {/* 색상 선택 */}
+                  <View style={styles.colorRow}>
+                    {COLORS.map((c) => (
+                      <TouchableOpacity
+                        key={c}
+                        style={[styles.colorDot, { backgroundColor: c }, detailAssignColor === c && styles.colorDotSelected]}
+                        onPress={() => setDetailAssignColor(c)}
+                      />
+                    ))}
+                  </View>
+
+                  <Text style={styles.timePreview}>
+                    {detailAssignSlots.length === 0
+                      ? '분 버튼을 눌러 시간을 추가하세요'
+                      : `${detailAssignSlots.length}개 슬롯에 배정됩니다`}
+                  </Text>
+                </>
+              )}
+            </ScrollView>
+            <View style={styles.fetchModalActions}>
+              <TouchableOpacity
+                style={styles.fetchCancelBtn}
+                onPress={() => { setDetailModalVisible(false); setSelectedDump(null); }}
+              >
+                <Text style={styles.fetchCancelText}>취소</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.fetchConfirmBtn} onPress={handleSaveDetail}>
+                <Text style={styles.fetchConfirmText}>저장</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
       {/* Brain Dump 선택 모달 */}
       <Modal
         visible={slotModalVisible}
@@ -469,11 +758,10 @@ export default function TimeBoxScreen({ userId, onMenuPress }: Props) {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalBox}>
+            {/* 고정 헤더 영역 */}
             <Text style={styles.modalTitle}>
               {String(selectedHour).padStart(2, '0')}:{String(selectedMinute).padStart(2, '0')} — 할 일 배정
             </Text>
-
-            {/* 색상 선택 */}
             <Text style={styles.modalSubTitle}>색상 선택</Text>
             <View style={styles.colorRow}>
               {COLORS.map((c) => (
@@ -488,36 +776,108 @@ export default function TimeBoxScreen({ userId, onMenuPress }: Props) {
                 />
               ))}
             </View>
-
-            {/* 미완료 Brain Dump 목록 */}
             <Text style={styles.modalSubTitle}>할 일 선택</Text>
-            {incompleteDumps.length === 0 ? (
-              <Text style={styles.emptyText}>배정할 수 있는 할 일이 없습니다.</Text>
-            ) : (
-              <FlatList
-                data={incompleteDumps}
-                keyExtractor={(item) => item.dump_id}
-                style={styles.modalList}
-                renderItem={({ item }) => (
-                  <TouchableOpacity
-                    style={styles.modalDumpItem}
-                    onPress={() => handleAssignDump(item)}
-                  >
-                    <Text style={styles.modalDumpPriority}>
-                      {item.priority_yn === 'Y' ? '★ ' : ''}
-                    </Text>
-                    <Text style={styles.modalDumpTitle}>{item.dump_title}</Text>
-                  </TouchableOpacity>
-                )}
-              />
-            )}
 
+            {/* 스크롤 가능한 목록 영역 — flex: 1로 남은 공간 차지 */}
+            <View style={styles.modalListContainer}>
+              {incompleteDumps.length === 0 ? (
+                <Text style={styles.emptyText}>배정할 수 있는 할 일이 없습니다.</Text>
+              ) : (
+                <FlatList
+                  data={incompleteDumps}
+                  keyExtractor={(item) => item.dump_id}
+                  style={styles.modalList}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      style={styles.modalDumpItem}
+                      onPress={() => handleAssignDump(item)}
+                    >
+                      <Text style={styles.modalDumpPriority}>
+                        {item.priority_yn === 'Y' ? '★ ' : ''}
+                      </Text>
+                      <Text style={styles.modalDumpTitle}>{item.dump_title}</Text>
+                    </TouchableOpacity>
+                  )}
+                />
+              )}
+            </View>
+
+            {/* 항상 보이는 취소 버튼 */}
             <TouchableOpacity
               onPress={() => setSlotModalVisible(false)}
               style={styles.modalCancelBtn}
             >
               <Text style={styles.modalCancelText}>취소</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+      {/* 배정된 슬롯 상세 모달 */}
+      <Modal
+        visible={slotDetailModalVisible}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setSlotDetailModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.slotDetailBox}>
+            {/* 헤더: 시간 + 색상 바 */}
+            <View style={[styles.slotDetailColorBar, { backgroundColor: slotDetailColor }]} />
+            <Text style={styles.slotDetailTime}>
+              {selectedSlotItem
+                ? `${String(selectedSlotItem.time_hour).padStart(2, '0')}:${selectedSlotItem.time_minute === 0 ? '00' : '30'}`
+                : ''}
+            </Text>
+
+            {/* 색상 선택 */}
+            <Text style={styles.modalSubTitle}>색상 선택</Text>
+            <View style={styles.colorRow}>
+              {COLORS.map((c) => (
+                <TouchableOpacity
+                  key={c}
+                  onPress={() => setSlotDetailColor(c)}
+                  style={[styles.colorDot, { backgroundColor: c }, slotDetailColor === c && styles.colorDotSelected]}
+                />
+              ))}
+            </View>
+
+            {/* 할 일 선택 */}
+            <Text style={styles.modalSubTitle}>할 일 선택</Text>
+            <View style={styles.modalListContainer}>
+              <FlatList
+                data={brainDumps}
+                keyExtractor={(item) => item.dump_id}
+                style={styles.modalList}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={[styles.modalDumpItem, slotDetailDumpId === item.dump_id && styles.modalDumpItemSelected]}
+                    onPress={() => setSlotDetailDumpId(item.dump_id)}
+                  >
+                    <Text style={styles.modalDumpPriority}>{item.priority_yn === 'Y' ? '★ ' : ''}</Text>
+                    <Text style={[styles.modalDumpTitle, slotDetailDumpId === item.dump_id && styles.modalDumpTitleSelected]}>
+                      {item.dump_title}
+                    </Text>
+                    {slotDetailDumpId === item.dump_id && <Text style={styles.modalDumpCheck}>✓</Text>}
+                  </TouchableOpacity>
+                )}
+              />
+            </View>
+
+            {/* 버튼 */}
+            <View style={styles.slotDetailActions}>
+              <TouchableOpacity
+                style={styles.slotDetailDeleteBtn}
+                onPress={() => {
+                  if (selectedSlotItem) handleDeleteTimeTable(selectedSlotItem);
+                  setSlotDetailModalVisible(false);
+                }}
+              >
+                <Text style={styles.slotDetailDeleteText}>배정 삭제</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.slotDetailCloseBtn} onPress={handleSaveSlotDetail}>
+                <Text style={styles.slotDetailCloseText}>저장</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -664,8 +1024,9 @@ const styles = StyleSheet.create({
   priorityBtn: { padding: 4 },
   priorityIcon: { fontSize: 18, color: '#ccc' },
   priorityActive: { color: '#d97706' },
-  dumpTitle: { flex: 1, fontSize: 15, color: '#1a1a2e' },
+  dumpTitle: { fontSize: 15, color: '#1a1a2e' },
   dumpTitleDone: { textDecorationLine: 'line-through', color: '#aaa' },
+  dumpContentPreview: { fontSize: 12, color: '#888', marginTop: 2 },
   completeBtn: { padding: 4 },
   completeIcon: { fontSize: 16, color: '#ccc', fontWeight: '700' },
   completeActive: { color: '#16a34a' },
@@ -720,14 +1081,20 @@ const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.4)',
-    justifyContent: 'flex-end',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
   },
   modalBox: {
     backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    borderRadius: 20,
     padding: 20,
-    maxHeight: '75%',
+    width: '100%',
+    height: SCREEN_HEIGHT * 0.75,
+    flexDirection: 'column',
+  },
+  modalListContainer: {
+    flex: 1,
   },
   modalTitle: { fontSize: 17, fontWeight: '700', color: '#1a1a2e', marginBottom: 16 },
   modalSubTitle: { fontSize: 13, color: '#888', marginBottom: 8, marginTop: 4 },
@@ -745,7 +1112,7 @@ const styles = StyleSheet.create({
   },
 
   // 모달 Brain Dump 목록
-  modalList: { maxHeight: 280, marginBottom: 8 },
+  modalList: { flex: 1 },
   modalDumpItem: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -755,6 +1122,9 @@ const styles = StyleSheet.create({
   },
   modalDumpPriority: { fontSize: 15, color: '#d97706', marginRight: 4 },
   modalDumpTitle: { fontSize: 15, color: '#1a1a2e', flex: 1 },
+  modalDumpItemSelected: { backgroundColor: '#f5f3ff' },
+  modalDumpTitleSelected: { color: '#4f46e5', fontWeight: '600' },
+  modalDumpCheck: { fontSize: 15, color: '#4f46e5', fontWeight: '700' },
 
   modalCancelBtn: {
     marginTop: 8,
@@ -827,4 +1197,230 @@ const styles = StyleSheet.create({
   },
   fetchConfirmText: { color: '#fff', fontSize: 15, fontWeight: '600' },
   disabledBtn: { backgroundColor: '#86efac' },
+
+  // 상세 편집 모달
+  detailModal: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    padding: 24,
+    width: '100%',
+    maxHeight: SCREEN_HEIGHT * 0.85,
+  },
+  detailModalTitle: { fontSize: 18, fontWeight: '700', color: '#1a1a2e', marginBottom: 16 },
+  detailLabel: { fontSize: 13, color: '#666', marginBottom: 6, marginTop: 4 },
+  detailTitleInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 10,
+    fontSize: 15,
+    color: '#1a1a2e',
+    backgroundColor: '#f8f9fa',
+    marginBottom: 12,
+  },
+  detailContentInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 10,
+    fontSize: 14,
+    color: '#1a1a2e',
+    backgroundColor: '#f8f9fa',
+    minHeight: 120,
+    maxHeight: 200,
+    marginBottom: 20,
+  },
+  timeAssignHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  timeToggleBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 5,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    backgroundColor: '#f0f0f0',
+  },
+  timeToggleBtnOn: {
+    backgroundColor: '#4f46e5',
+    borderColor: '#4f46e5',
+  },
+  timeToggleText: { fontSize: 13, fontWeight: '600', color: '#999' },
+  timeToggleTextOn: { color: '#fff' },
+  hourScroll: { marginBottom: 8 },
+  hourBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    backgroundColor: '#f8f9fa',
+    marginRight: 6,
+  },
+  hourBtnSelected: {
+    backgroundColor: '#4f46e5',
+    borderColor: '#4f46e5',
+  },
+  hourBtnText: { fontSize: 13, color: '#444' },
+  hourBtnTextSelected: { color: '#fff', fontWeight: '700' },
+  minuteRow: { flexDirection: 'row', gap: 10, marginBottom: 10 },
+  minuteBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    backgroundColor: '#f8f9fa',
+    alignItems: 'center',
+  },
+  minuteBtnSelected: {
+    backgroundColor: '#4f46e5',
+    borderColor: '#4f46e5',
+  },
+  minuteBtnText: { fontSize: 14, color: '#444', fontWeight: '600' },
+  minuteBtnTextSelected: { color: '#fff' },
+  minuteBtnAssigned: {
+    backgroundColor: '#f0f0f0',
+    borderColor: '#ccc',
+    opacity: 0.6,
+  },
+  minuteBtnTextAssigned: { color: '#aaa' },
+  minuteBtnAssignedLabel: { fontSize: 11, color: '#aaa', marginLeft: 4 },
+  slotChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 10,
+  },
+  slotChip: {
+    backgroundColor: '#ede9fe',
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  slotChipText: { fontSize: 12, color: '#4f46e5', fontWeight: '600' },
+  timePreview: {
+    textAlign: 'center',
+    fontSize: 13,
+    color: '#4f46e5',
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+
+  // 기존 배정 시간 표시
+  existingSlotsSection: {
+    marginBottom: 12,
+  },
+  existingSlotsList: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  existingSlotChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f5f3ff',
+    borderLeftWidth: 4,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    gap: 8,
+  },
+  existingSlotText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1a1a2e',
+  },
+  existingSlotDeleteText: {
+    fontSize: 13,
+    color: '#ef4444',
+    fontWeight: '700',
+  },
+
+  // 배정된 슬롯 상세 모달
+  slotDetailBox: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 24,
+    width: '100%',
+    height: SCREEN_HEIGHT * 0.75,
+    flexDirection: 'column',
+  },
+  slotDetailColorBar: {
+    height: 4,
+    borderRadius: 2,
+    marginBottom: 16,
+  },
+  slotDetailTime: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#1a1a2e',
+    marginBottom: 10,
+  },
+  slotDetailTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  slotDetailPriority: {
+    fontSize: 18,
+    color: '#d97706',
+  },
+  slotDetailTitle: {
+    fontSize: 18,
+    color: '#1a1a2e',
+    fontWeight: '600',
+    flex: 1,
+  },
+  slotDetailTitleDone: {
+    textDecorationLine: 'line-through',
+    color: '#aaa',
+  },
+  slotDetailBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#dcfce7',
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginBottom: 20,
+  },
+  slotDetailBadgeText: {
+    fontSize: 12,
+    color: '#16a34a',
+    fontWeight: '600',
+  },
+  slotDetailActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 8,
+  },
+  slotDetailDeleteBtn: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#ef4444',
+    alignItems: 'center',
+  },
+  slotDetailDeleteText: {
+    color: '#ef4444',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  slotDetailCloseBtn: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: '#4f46e5',
+    alignItems: 'center',
+  },
+  slotDetailCloseText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
+  },
 });

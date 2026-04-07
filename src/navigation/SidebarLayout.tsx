@@ -79,7 +79,7 @@ export default function SidebarLayout({ userId }: Props) {
       <Animated.View style={[styles.sidebar, { transform: [{ translateX }] }]}>
         <SafeAreaView style={styles.sidebarContent}>
           <View style={styles.sidebarHeader}>
-            <Text style={styles.appName}>MyApp</Text>
+            <Text style={styles.appName}>HY Lab</Text>
             <TouchableOpacity onPress={closeSidebar} style={styles.closeBtn}>
               <Text style={styles.closeBtnText}>✕</Text>
             </TouchableOpacity>

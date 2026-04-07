@@ -6,7 +6,7 @@ import staticSeed from './seed.json';
 const db: SQLite.SQLiteDatabase = SQLite.openDatabaseSync('myapp.db');
 //const db: SQLite.SQLiteDatabase
 // 스키마가 바뀔 때마다 이 값을 올리면 테이블을 재생성합니다
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 export async function initDb() {
   const versionRow = await db.getFirstAsync<{ user_version: number }>(
@@ -80,7 +80,8 @@ export async function initDb() {
       reg_id        TEXT,
       reg_dt        TEXT,
       upd_id        TEXT,
-      mod_dt        TEXT
+      mod_dt        TEXT,
+      synced        INTEGER DEFAULT 0
     );
 
     PRAGMA user_version = ${SCHEMA_VERSION};
@@ -376,6 +377,14 @@ export async function toggleComplete(dumpId: string, completeYn: string) {
   );
 }
 
+export async function updateBrainDump(dumpId: string, userId: string, dumpTitle: string, dumpContent: string) {
+  const now = new Date().toISOString();
+  return db.runAsync(
+    `UPDATE tb_tbox_brain_dump SET dump_title = ?, dump_content = ?, upd_id = ?, mod_dt = ?, synced = 0 WHERE dump_id = ?`,
+    [String(dumpTitle), String(dumpContent), String(userId), now, String(dumpId)]
+  );
+}
+
 export async function deleteBrainDump(dumpId: string) {
   return db.runAsync('DELETE FROM tb_tbox_brain_dump WHERE dump_id = ?', [String(dumpId)]);
 }
@@ -403,13 +412,14 @@ export async function saveTimeTable(
   userId: string,
   timeHour: number,
   timeMinute: number,
-  color: string
+  color: string,
+  synced: string
 ) {
   const now = new Date().toISOString();
   return db.runAsync(
     `INSERT OR REPLACE INTO tb_tbox_time_table
-      (time_table_id, dump_id, tbox_date, user_id, time_hour, time_minute, color, reg_id, reg_dt, upd_id, mod_dt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (time_table_id, dump_id, tbox_date, user_id, time_hour, time_minute, color, reg_id, reg_dt, upd_id, mod_dt, synced)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
     [
       String(timeTableId),
       String(dumpId),
@@ -422,10 +432,31 @@ export async function saveTimeTable(
       now,
       String(userId),
       now,
+      String(synced)
     ]
   );
 }
 
 export async function deleteTimeTable(timeTableId: string) {
   return db.runAsync('DELETE FROM tb_tbox_time_table WHERE time_table_id = ?', [String(timeTableId)]);
+}
+
+export async function getUnsyncedTimeTables(userId: string) {
+  return db.getAllAsync<{
+    time_table_id: string;
+    dump_id: string;
+    tbox_date: string;
+    user_id: string;
+    time_hour: number;
+    time_minute: number;
+    color: string;
+  }>(
+    `SELECT time_table_id, dump_id, tbox_date, user_id, time_hour, time_minute, color
+     FROM tb_tbox_time_table WHERE user_id = ? AND synced = 0`,
+    [userId]
+  );
+}
+
+export async function markTimeTableSynced(timeTableId: string) {
+  return db.runAsync('UPDATE tb_tbox_time_table SET synced = 1 WHERE time_table_id = ?', [String(timeTableId)]);
 }
